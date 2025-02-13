@@ -83,13 +83,15 @@ const QueueDisplay = () => {
                   const ticketB = parseInt(b.data().userTicketNumber) || 0;
                   return ticketA - ticketB;
                 })
+              
                 return (
                   <View key={faculty.id} style={styles.ticketRow}>
                     <Text style={styles.faculty}>{faculty.name}</Text>
-                    <View >
-                      {waitingStudents.map(student => (
+                    <View style={styles.waitingContainer}>
+                      {waitingStudents.map((student, index) => (
                         <Text key={student.id} style={styles.waiting}>
                           {student.data().program}-{String(student.data().userTicketNumber).padStart(4, '0')}
+                          {index < waitingStudents.length - 1 ? ", " : ""}
                         </Text>
                       ))}
                     </View>
@@ -118,7 +120,8 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#e6e6e6',
-    width: '95%',
+    width: '98%',
+    height: '98%',
     padding: 30,
     borderRadius: 10,
   },
@@ -154,12 +157,23 @@ const styles = StyleSheet.create({
     minWidth: 160,
   },
   ticket: {
-    fontSize: 52,
+    fontSize: 40,
     fontWeight: 'bold',
+  },
+  waitingRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    alignItems: 'center',
+  },
+  waitingContainer: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'center',
+    gap: 10,
   },
   waiting: {
     fontSize: 40,
-    color: '#2c5282',
   },
   verticalSeparator: {
     width: 3,
