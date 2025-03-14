@@ -1,14 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Dimensions, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image } from 'react-native';
 import { collection, onSnapshot, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from '@/firebaseConfig';
 
-// Move constants outside the component
-const ROW_HEIGHT = 80; // Approximate height of each row
-const ROWS_PER_PAGE = 6; // Number of rows to show at once
-const PAUSE_DURATION = 5000; // Pause duration in milliseconds (5 seconds)
-
-// Define FacultyItem interface since we're not importing from mockData
+// Define FacultyItem interface
 interface FacultyItem {
   id: string;
   name: string;
@@ -21,96 +16,84 @@ interface FacultyItem {
 const QueueDisplay = () => {
   const [facultyData, setFacultyData] = useState<FacultyItem[]>([]);
   const [allDocs, setAllDocs] = useState<QueryDocumentSnapshot[]>([]);
+  
+  // References for ScrollViews
   const servingScrollViewRef = useRef<ScrollView>(null);
   const waitingScrollViewRef = useRef<ScrollView>(null);
-  const [contentHeight, setContentHeight] = useState(0);
-  const screenHeight = Dimensions.get('window').height;
+  
+  // Current index for scrolling
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [ticketHeight, setTicketHeight] = useState(100); // Default height
 
   useEffect(() => {
-    // Use real Firebase data
     const facultyCollectionRef = collection(db, 'student');
     const unsubscribe = onSnapshot(facultyCollectionRef, (snapshot) => {
-      const faculty: FacultyItem[] = [];
-      setAllDocs(snapshot.docs);
-      const allDocs = snapshot.docs;
-      const facultyDocs = allDocs
+      const docs = snapshot.docs;
+      setAllDocs(docs);
+
+      const facultyDocs = docs
         .filter(doc => doc.data().userType === 'FACULTY')
         .sort((a, b) => (a.data().fullName || '').localeCompare(b.data().fullName || ''));
 
-      facultyDocs.forEach(facultyDoc => {
+      const faculty = facultyDocs.map(facultyDoc => {
         const displayedTicket = facultyDoc.data().displayedTicket;
-        const matchingStudent = allDocs.find(
+        const matchingStudent = docs.find(
           doc => doc.data().userTicketNumber === displayedTicket && doc.data().userType !== 'FACULTY'
         );
 
-        faculty.push({
+        return {
           id: facultyDoc.id,
           name: facultyDoc.data().fullName || '',
           displayedTicket: displayedTicket || '',
           userType: facultyDoc.data().userType || '',
           numOnQueue: facultyDoc.data().numOnQueue || 0,
           currentStudentProgram: matchingStudent?.data().program || ''
-        });
+        };
       });
-      
+
       setFacultyData(faculty);
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Synchronized scrolling function
-  const handleScroll = (event: any, targetRef: React.RefObject<ScrollView>) => {
-    const y = event.nativeEvent.contentOffset.y;
-    if (targetRef.current) {
-      targetRef.current.scrollTo({ y, animated: false });
+  // Set up auto-scrolling
+  useEffect(() => {
+    // Only start auto-scrolling if we have content
+    const activeFaculty = facultyData.filter(faculty => faculty.displayedTicket);
+    if (activeFaculty.length === 0) return;
+    
+    // Function to scroll to the next faculty
+    const scrollToNext = () => {
+      // Calculate next index, wrapping around to 0 if we reach the end
+      const nextIndex = (currentIndex + 1) % activeFaculty.length;
+      
+      // Calculate the Y position based on index and ticket height
+      // Adding a small offset for margins/padding
+      const yPosition = nextIndex * (ticketHeight + 25); 
+      
+      // Scroll both views to the same relative position
+      servingScrollViewRef.current?.scrollTo({ y: yPosition, animated: true });
+      waitingScrollViewRef.current?.scrollTo({ y: yPosition, animated: true });
+      
+      // Update the current index
+      setCurrentIndex(nextIndex);
+    };
+    
+    // Set a timer to scroll after a 2-second pause
+    const timer = setTimeout(scrollToNext, 5000);
+    
+    // Clean up timer when component unmounts or when dependencies change
+    return () => clearTimeout(timer);
+  }, [currentIndex, facultyData, ticketHeight]);
+
+  // Measure the height of a ticket row to use for scrolling calculations
+  const onTicketLayout = (event: any) => {
+    const { height } = event.nativeEvent.layout;
+    if (height > 0 && height !== ticketHeight) {
+      setTicketHeight(height);
     }
   };
-
-  // Auto-scroll effect for the content
-  useEffect(() => {
-    if (contentHeight > screenHeight * 0.6) {
-      // Calculate approx page size (height of 6 rows)
-      const pageSize = ROWS_PER_PAGE * ROW_HEIGHT;
-      
-      // Set up auto-scrolling for both sections simultaneously
-      let currentPage = 0;
-      let scrollPosition = 0;
-      let isPaused = false;
-      let maxPages = Math.ceil(contentHeight / pageSize);
-      
-      const scrollInterval = setInterval(() => {
-        if (servingScrollViewRef.current && waitingScrollViewRef.current && !isPaused) {
-          // Calculate the new scroll position for the current page
-          scrollPosition = currentPage * pageSize;
-          
-          // Perform the scroll on both sections
-          servingScrollViewRef.current.scrollTo({ y: scrollPosition, animated: true });
-          waitingScrollViewRef.current.scrollTo({ y: scrollPosition, animated: true });
-          
-          // Set the pause flag
-          isPaused = true;
-          
-          // Schedule unpause after PAUSE_DURATION
-          setTimeout(() => {
-            isPaused = false;
-            
-            // Move to next page
-            currentPage++;
-            
-            // If reached the end, go back to first page
-            if (currentPage >= maxPages) {
-              currentPage = 0;
-            }
-          }, PAUSE_DURATION);
-        }
-      }, PAUSE_DURATION + 500); // Add a small buffer to the interval
-      
-      return () => {
-        clearInterval(scrollInterval);
-      };
-    }
-  }, [contentHeight, screenHeight, facultyData]);
 
   return (
     <View style={styles.container}>
@@ -127,37 +110,33 @@ const QueueDisplay = () => {
         <View style={styles.mainRow}>
           {/* LEFT SECTION - NOW SERVING */}
           <View style={styles.mainSection}>
-            {/* Fixed header */}
             <View style={styles.stickyHeader}>
               <Text style={styles.mainHeading}>NOW SERVING</Text>
             </View>
             
-            {/* Scrollable content */}
             <ScrollView 
               ref={servingScrollViewRef}
               style={styles.sectionScrollView}
               contentContainerStyle={styles.scrollViewContent}
-              onContentSizeChange={(width, height) => {
-                setContentHeight(height);
-              }}
               showsVerticalScrollIndicator={false}
-              onScroll={(e) => handleScroll(e, waitingScrollViewRef)}
-              scrollEventThrottle={16}
+              scrollEnabled={false} // Disable manual scrolling
             >
               <View style={styles.servingContent}>
-                {facultyData.map((faculty) => (
-                  <View key={faculty.id} style={styles.ticketRow}>
-                    {faculty.displayedTicket && (
-                      <>
-                        <Text style={styles.faculty}>{faculty.name}</Text>
-                        <Text style={styles.ticket}>
-                          {faculty.currentStudentProgram && `${faculty.currentStudentProgram}-`}
-                          {String(faculty.displayedTicket).padStart(4, '0')}
-                        </Text>
-                      </>
-                    )}
-                  </View>
-                ))}
+                {facultyData
+                  .filter(faculty => faculty.displayedTicket)
+                  .map((faculty, index) => (
+                    <View 
+                      key={faculty.id} 
+                      style={styles.ticketRow}
+                      onLayout={index === 0 ? onTicketLayout : undefined}
+                    >
+                      <Text style={styles.faculty}>{faculty.name}</Text>
+                      <Text style={styles.ticket}>
+                        {faculty.currentStudentProgram && `${faculty.currentStudentProgram}-`}
+                        {String(faculty.displayedTicket).padStart(4, '0')}
+                      </Text>
+                    </View>
+                  ))}
               </View>
             </ScrollView>
           </View>
@@ -166,65 +145,62 @@ const QueueDisplay = () => {
 
           {/* RIGHT SECTION - WAITING */}
           <View style={styles.mainSection}>
-            {/* Fixed header */}
             <View style={styles.stickyHeader}>
               <Text style={styles.mainHeading}>WAITING</Text>
             </View>
             
-            {/* Scrollable content */}
             <ScrollView 
               ref={waitingScrollViewRef}
               style={styles.sectionScrollView}
               contentContainerStyle={styles.scrollViewContent}
               showsVerticalScrollIndicator={false}
-              onScroll={(e) => handleScroll(e, servingScrollViewRef)}
-              scrollEventThrottle={16}
+              scrollEnabled={false} // Disable manual scrolling
             >
               <View style={styles.waitingContent}>
-                {facultyData.map((faculty) => {
-                  const waitingStudents = allDocs
-                  .filter(doc =>
-                    doc.data().faculty === faculty.name &&
-                    doc.data().userType !== 'FACULTY' &&
-                    parseInt(doc.data().userTicketNumber) > parseInt(faculty.displayedTicket)
-                  )
-                  .sort((a, b) => {
-                    const ticketA = parseInt(a.data().userTicketNumber) || 0;
-                    const ticketB = parseInt(b.data().userTicketNumber) || 0;
-                    return ticketA - ticketB;
-                  })
-                
-                  return (
-                    <View key={faculty.id} style={styles.ticketRow}>
-                      {faculty.displayedTicket && (
-                        <>
-                          <ScrollView 
-                            horizontal={true}
-                            showsHorizontalScrollIndicator={false}
-                            style={styles.waitingScrollView}
-                            contentContainerStyle={styles.waitingContainer}>
-                            {waitingStudents.length > 0 ? (
-                              <>
-                                {waitingStudents.slice(0, 3).map((student, index) => (
-                                  <Text key={student.id} style={styles.waiting}>
-                                    {student.data().program}-
-                                    {String(student.data().userTicketNumber).padStart(4, '0')}
-                                    {index < Math.min(waitingStudents.length, 3) - 1 && index < 2 ? ", " : ""}
-                                  </Text>
-                                ))}
-                                {waitingStudents.length > 3 && (
-                                  <Text style={styles.waiting}>...</Text>
-                                )}
-                              </>
-                            ) : (
-                              <Text style={styles.waiting}>NONE</Text>
-                            )}
-                          </ScrollView>
-                        </>
-                      )}
-                    </View>
-                  );
-                })}
+                {facultyData
+                  .filter(faculty => faculty.displayedTicket)
+                  .map((faculty) => {
+                    const waitingStudents = allDocs
+                      .filter(doc =>
+                        doc.data().faculty === faculty.name &&
+                        doc.data().userType !== 'FACULTY' &&
+                        parseInt(doc.data().userTicketNumber) > parseInt(faculty.displayedTicket)
+                      )
+                      .sort((a, b) => {
+                        const ticketA = parseInt(a.data().userTicketNumber) || 0;
+                        const ticketB = parseInt(b.data().userTicketNumber) || 0;
+                        return ticketA - ticketB;
+                      });
+
+                    return (
+                      <View key={faculty.id} style={styles.ticketRow}>
+                        <ScrollView 
+                          horizontal={true}
+                          showsHorizontalScrollIndicator={false}
+                          style={styles.waitingScrollView}
+                          contentContainerStyle={styles.waitingContainer}
+                          scrollEnabled={false} // Disable manual scrolling
+                        >
+                          {waitingStudents.length > 0 ? (
+                            <>
+                              {waitingStudents.slice(0, 3).map((student, index) => (
+                                <Text key={student.id} style={styles.waiting}>
+                                  {student.data().program}-
+                                  {String(student.data().userTicketNumber).padStart(4, '0')}
+                                  {index < Math.min(waitingStudents.length, 3) - 1 ? ", " : ""}
+                                </Text>
+                              ))}
+                              {waitingStudents.length > 3 && (
+                                <Text style={styles.waiting}>...</Text>
+                              )}
+                            </>
+                          ) : (
+                            <Text style={styles.waiting}>NONE</Text>
+                          )}
+                        </ScrollView>
+                      </View>
+                    );
+                  })}
               </View>
             </ScrollView>
           </View>
@@ -248,7 +224,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   waitingScrollView: {
-    flex: 0.6,
+    flex: 1,
   },
   waitingContainer: {
     flexDirection: 'row',
@@ -263,7 +239,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#A31D1D',
+    backgroundColor: 'rgb(46, 1, 1)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 10,
@@ -289,7 +265,7 @@ const styles = StyleSheet.create({
   backgroundLogo: {
     width: "75%",
     height: "75%",
-    opacity: 0.1, // Adjust opacity as needed
+    opacity: 0.1,
   },
   mainRow: {
     flexDirection: 'row',
@@ -319,14 +295,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 10,
-    gap: 10,
+    gap: 20,
+    marginBottom: 20,
     flex: 1,
-    height: ROW_HEIGHT,
+    height: 100,
   },
   faculty: {
     fontSize: 36,
     fontWeight: 'bold',
-    flex:1.5,
+    flex: 1.5,
   },
   ticket: {
     fontSize: 40,
@@ -334,12 +311,6 @@ const styles = StyleSheet.create({
     color: '#D84040',
     textAlign: 'right',
     flex: 0.6,
-  },
-  waitingRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    alignItems: 'center',
   },
   waiting: {
     fontSize: 40,
